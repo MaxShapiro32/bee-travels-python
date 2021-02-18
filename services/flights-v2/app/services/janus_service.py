@@ -31,6 +31,7 @@ def get_values(d):
             d[k] = d[k][0]
         else:
             d[k] = get_values(d[k])
+    d.pop("object_type", None)
     return d
 
 
@@ -96,7 +97,14 @@ def merge_flight_data(flights):
 
 def get_flight_info_from_janus(filter):
     try:
-        res = g.V().hasLabel("flight").values(filter).dedup().toList()
+        res = (
+            g.V()
+            .has("object_type", "flight")
+            .limit(30000)
+            .values("airlines")
+            .dedup()
+            .toList()
+        )
         return res
     except Exception as e:
         print(e)
@@ -207,7 +215,13 @@ def get_airports_from_janus(city, country, code, context):
 
 def get_airports_list_from_janus(context):
     try:
-        res = g.V().hasLabel("airport").valueMap("country", "city").dedup().toList()
+        res = (
+            g.V()
+            .has("object_type", "airport")
+            .valueMap("country", "city")
+            .dedup()
+            .toList()
+        )
 
         for i in range(0, len(res)):
             res[i] = get_values(res[i])
@@ -220,11 +234,17 @@ def get_direct_flights_from_janus(from_, to, context):
     try:
         res = (
             g.V()
-            .and_(
-                __.hasLabel("flight"),
-                __.out("departing").has("id", from_),
-                __.out("arriving").has("id", to),
-            )
+            .hasLabel("airport")
+            .has("id", from_)
+            .bothE("departing")
+            .otherV()
+            .as_("flight1")
+            .hasLabel("flight")
+            .bothE("arriving")
+            .otherV()
+            .hasLabel("airport")
+            .has("id", to)
+            .select("flight1")
             .valueMap()
             .toList()
         )
@@ -240,11 +260,12 @@ def get_onestop_flights_from_janus(from_, to, context):
     try:
         res = (
             g.V()
+            .hasLabel("airport")
+            .has("id", "9600276f-608f-4325-a037-f185848f2e28")
+            .bothE("departing")
+            .otherV()
             .as_("flight1")
-            .and_(
-                __.hasLabel("flight"),
-                __.out("departing").has("id", from_),
-            )
+            .hasLabel("flight")
             .values("flight_duration")
             .as_("fd")
             .select("flight1")
@@ -252,16 +273,23 @@ def get_onestop_flights_from_janus(from_, to, context):
             .math("_ + fd + 60")
             .as_("flight1_time")
             .select("flight1")
-            .out("arriving")
-            .in_("departing")
+            .bothE("arriving")
+            .otherV()
+            .hasLabel("airport")
+            .bothE("departing")
+            .otherV()
             .as_("flight2")
-            .and_(
-                __.hasLabel("flight"),
-                __.out("arriving").has("id", to),
-                __.values("flight_time").math("_ - flight1_time").is_(P.gte(0)),
-            )
+            .hasLabel("flight")
+            .values("flight_time")
+            .math("_ - flight1_time")
+            .is_(P.gte(0))
             .where("flight1", P.eq("flight2"))
             .by("airlines")
+            .select("flight2")
+            .bothE("arriving")
+            .otherV()
+            .hasLabel("airport")
+            .has("id", "ebc645cd-ea42-40dc-b940-69456b64d2dd")
             .select("flight1", "flight2")
             .by(__.valueMap())
             .limit(20)
@@ -279,11 +307,12 @@ def get_twostop_flights_from_janus(from_, to, context):
     try:
         res = (
             g.V()
+            .hasLabel("airport")
+            .has("id", "9600276f-608f-4325-a037-f185848f2e28")
+            .bothE("departing")
+            .otherV()
             .as_("flight1")
-            .and_(
-                __.hasLabel("flight"),
-                __.out("departing").has("id", from_),
-            )
+            .hasLabel("flight")
             .values("flight_duration")
             .as_("fd")
             .select("flight1")
@@ -291,15 +320,19 @@ def get_twostop_flights_from_janus(from_, to, context):
             .math("_ + fd + 60")
             .as_("flight1_time")
             .select("flight1")
-            .out("arriving")
-            .in_("departing")
+            .bothE("arriving")
+            .otherV()
+            .hasLabel("airport")
+            .bothE("departing")
+            .otherV()
             .as_("flight2")
-            .and_(
-                __.hasLabel("flight"),
-                __.values("flight_time").math("_ - flight1_time").is_(P.gte(0)),
-            )
+            .hasLabel("flight")
+            .values("flight_time")
+            .math("_ - flight1_time")
+            .is_(P.gte(0))
             .where("flight1", P.eq("flight2"))
             .by("airlines")
+            .select("flight2")
             .values("flight_duration")
             .as_("fd1")
             .select("flight2")
@@ -307,16 +340,23 @@ def get_twostop_flights_from_janus(from_, to, context):
             .math("_ + fd1 + 60")
             .as_("flight2_time")
             .select("flight2")
-            .out("arriving")
-            .in_("departing")
+            .bothE("arriving")
+            .otherV()
+            .hasLabel("airport")
+            .bothE("departing")
+            .otherV()
             .as_("flight3")
-            .and_(
-                __.hasLabel("flight"),
-                __.out("arriving").has("id", to),
-                __.values("flight_time").math("_ - flight2_time").is_(P.gte(0)),
-            )
+            .hasLabel("flight")
+            .values("flight_time")
+            .math("_ - flight2_time")
+            .is_(P.gte(0))
             .where("flight2", P.eq("flight3"))
             .by("airlines")
+            .select("flight3")
+            .bothE("arriving")
+            .otherV()
+            .hasLabel("airport")
+            .has("id", "ebc645cd-ea42-40dc-b940-69456b64d2dd")
             .select("flight1", "flight2", "flight3")
             .by(__.valueMap())
             .limit(10)
@@ -477,7 +517,7 @@ def janus():
 
 def load_data():
     try:
-        g.addV("airport").property(
+        g.addV("airport").property("object_type", "airport").property(
             "id", "9600276f-608f-4325-a037-f185848f2e28"
         ).property("name", "Los Angeles International Airport").property(
             "is_hub", True
@@ -498,7 +538,7 @@ def load_data():
         ).property(
             "iata_code", "LAX"
         ).iterate()
-        g.addV("airport").property(
+        g.addV("airport").property("object_type", "airport").property(
             "id", "ebc645cd-ea42-40dc-b940-69456b64d2dd"
         ).property("name", "John F. Kennedy International Airport").property(
             "is_hub", True
@@ -519,7 +559,7 @@ def load_data():
         ).property(
             "iata_code", "JFK"
         ).iterate()
-        g.addV("airport").property(
+        g.addV("airport").property("object_type", "airport").property(
             "id", "30a2b6e8-fcc2-4e59-a61d-3aff713b23b0"
         ).property("name", "Dallas Fort Worth International Airport").property(
             "is_hub", True
@@ -540,7 +580,7 @@ def load_data():
         ).property(
             "iata_code", "DFW"
         ).iterate()
-        g.addV("airport").property(
+        g.addV("airport").property("object_type", "airport").property(
             "id", "6275b58b-55a8-4c3f-93fa-372529ee0b2f"
         ).property("name", "Lester B. Pearson International Airport").property(
             "is_hub", True
@@ -561,7 +601,7 @@ def load_data():
         ).property(
             "iata_code", "YYZ"
         ).iterate()
-        g.addV("flight").property(
+        g.addV("flight").property("object_type", "flight").property(
             "id", "e7c3d85d-c523-4634-93ef-a84f55aeb1e5"
         ).property(
             "source_airport_id", "9600276f-608f-4325-a037-f185848f2e28"
@@ -576,7 +616,7 @@ def load_data():
         ).property(
             "airlines", "MilkyWay Airlines"
         ).iterate()
-        g.addV("flight").property(
+        g.addV("flight").property("object_type", "flight").property(
             "id", "fa3448ff-f157-4690-9180-0e06700ac909"
         ).property(
             "source_airport_id", "9600276f-608f-4325-a037-f185848f2e28"
@@ -591,7 +631,7 @@ def load_data():
         ).property(
             "airlines", "Phoenix Airlines"
         ).iterate()
-        g.addV("flight").property(
+        g.addV("flight").property("object_type", "flight").property(
             "id", "d76b8e14-3519-42eb-84ff-9a7406b43234"
         ).property(
             "source_airport_id", "9600276f-608f-4325-a037-f185848f2e28"
@@ -606,7 +646,7 @@ def load_data():
         ).property(
             "airlines", "Spartan Airlines"
         ).iterate()
-        g.addV("flight").property(
+        g.addV("flight").property("object_type", "flight").property(
             "id", "cd29ac89-1b5e-4f8c-8e7c-d53404e6b092"
         ).property(
             "source_airport_id", "30a2b6e8-fcc2-4e59-a61d-3aff713b23b0"
@@ -621,7 +661,7 @@ def load_data():
         ).property(
             "airlines", "Spartan Airlines"
         ).iterate()
-        g.addV("flight").property(
+        g.addV("flight").property("object_type", "flight").property(
             "id", "0656f352-8903-406f-a55c-e83e70028302"
         ).property(
             "source_airport_id", "ebc645cd-ea42-40dc-b940-69456b64d2dd"
